@@ -124,8 +124,8 @@ function getPriorityDaysSummaryTableData(map = {}) {
         });
         let ret = onlineDays / days;
         let percent = ret == 0 || isNaN(ret) ? '-' : (ret * 100).toFixed(2) + '%';
-        return ret === '-'
-            ? ret
+        return percent === '-'
+            ? percent
             : ret >= 0.8 || inOrOut === 'out'
             ? chalk.green.bold(percent)
             : chalk.red.bold(percent);
@@ -141,8 +141,8 @@ function getPriorityDaysSummaryTableData(map = {}) {
         });
         let ret = devDays / days;
         let percent = ret == 0 || isNaN(ret) ? '-' : (ret * 100).toFixed(2) + '%';
-        return ret === '-'
-            ? ret
+        return percent === '-'
+            ? percent
             : ret >= 0.8 || inOrOut === 'out'
             ? chalk.green.bold(percent)
             : chalk.red.bold(percent);
