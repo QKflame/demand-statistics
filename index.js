@@ -81,6 +81,90 @@ let totalDaysOutPlan = 0;
 let totalDaysInSupport = 0;
 let productSummaryMap = [];
 
+const priorities = [0, 1, 2, -1];
+
+function calculateObjectSum(obj) {
+    let sum = 0;
+
+    for (const key in obj) {
+        if (typeof obj[key] === 'number') {
+            // 如果属性值是数字，将其添加到总和中
+            sum += obj[key];
+        } else if (typeof obj[key] === 'object') {
+            // 如果属性值是对象，递归调用函数以计算子对象的总和
+            sum += calculateObjectSum(obj[key]);
+        }
+    }
+
+    return sum;
+}
+
+function setSheetNamePriorityProgressDaysMap(map, sheetName, inOrOut, priority, progress, days) {
+    const path = `${sheetName}.${inOrOut}.${priority}.${progress}.days`;
+    let val = _.get(map, path);
+    if (!val) {
+        val = 0;
+    }
+
+    _.set(map, path, val + days);
+}
+
+function getPriorityDaysSummaryTableData(map = {}) {
+    const getDays = (inOrOut, priority) => {
+        return calculateObjectSum(_.get(map, `${inOrOut}.${priority}`) || {});
+    };
+
+    const getOnlinePercent = (inOrOut, priority) => {
+        const days = getDays(inOrOut, priority);
+        let onlineDays = 0;
+        Object.keys(_.get(map, `${inOrOut}.${priority}`) || {}).forEach(progress => {
+            if (greenProgress.includes(progress)) {
+                onlineDays += _.get(map, `${inOrOut}.${priority}.${progress}.days`) || 0;
+            }
+        });
+        let ret = onlineDays / days;
+        let percent = ret == 0 || isNaN(ret) ? '-' : (ret * 100).toFixed(2) + '%';
+        return ret === '-'
+            ? ret
+            : ret >= 0.8 || inOrOut === 'out'
+            ? chalk.green.bold(percent)
+            : chalk.red.bold(percent);
+    };
+
+    const getDevPercent = (inOrOut, priority) => {
+        const days = getDays(inOrOut, priority);
+        let devDays = 0;
+        Object.keys(_.get(map, `${inOrOut}.${priority}`) || {}).forEach(progress => {
+            if (greenProgress.includes(progress) || blueProgress.includes(progress)) {
+                devDays += _.get(map, `${inOrOut}.${priority}.${progress}.days`) || 0;
+            }
+        });
+        let ret = devDays / days;
+        let percent = ret == 0 || isNaN(ret) ? '-' : (ret * 100).toFixed(2) + '%';
+        return ret === '-'
+            ? ret
+            : ret >= 0.8 || inOrOut === 'out'
+            ? chalk.green.bold(percent)
+            : chalk.red.bold(percent);
+    };
+
+    return priorities.map(item => {
+        const priority = `P${item}`;
+        return [
+            priority === 'P-1' ? '无' : priority,
+            getDays('in', priority),
+            getOnlinePercent('in', priority),
+            getDevPercent('in', priority),
+            getDays('out', priority),
+            getOnlinePercent('out', priority),
+            getDevPercent('out', priority)
+        ];
+    });
+}
+
+// 根据优先级，统计人力
+let sheetNamePriorityProgressDaysMap = {};
+
 sheets.forEach(({name: sheetName, data: sheetData}) => {
     let daysInPlan = 0;
     let daysOutPlan = 0;
@@ -91,6 +175,7 @@ sheets.forEach(({name: sheetName, data: sheetData}) => {
     let redItems = [];
     let blueItems = [];
     let greenItems = [];
+
     sheetData
         .filter(([title]) => title)
         .forEach(([title, priority, personInCharge, days, progress]) => {
@@ -101,12 +186,25 @@ sheets.forEach(({name: sheetName, data: sheetData}) => {
                 .replace(/(\d+%)/g, '')
                 .trim();
 
+            priority = (priority || 'P-1').trim().toUpperCase().replace(/\s/g, '');
+
             if (!_.concat(greenProgress, blueProgress, yellowProgress, redProgress).includes(progress)) {
                 throw new Error(`The "${progress}" progress value is invalid!`);
             }
 
             if (!isNaN(days)) {
-                if (/规划外/.test(title)) {
+                const isOutPlan = /规划外/.test(title);
+
+                setSheetNamePriorityProgressDaysMap(
+                    sheetNamePriorityProgressDaysMap,
+                    sheetName,
+                    isOutPlan ? 'out' : 'in',
+                    priority,
+                    progress,
+                    days
+                );
+
+                if (isOutPlan) {
                     daysOutPlan += days;
 
                     if (!daysProgressMapOutPlan[progress]) {
@@ -174,7 +272,7 @@ sheets.forEach(({name: sheetName, data: sheetData}) => {
     totalDaysOutPlan += daysOutPlan;
 
     const totalDays = daysInPlan + daysOutPlan;
-    console.log(`${chalk.bold('人力汇总:')}`);
+    console.log(`${chalk.bold('需求人力汇总:')}`);
     console.log(
         table([
             [chalk.bold('统计'), chalk.bold('规划内'), chalk.bold('规划外'), chalk.bold('总人力')],
@@ -234,10 +332,27 @@ sheets.forEach(({name: sheetName, data: sheetData}) => {
         );
     }
 
+    // 需求优先级分析
+    console.log(`${chalk.bold('需求完成情况:')}`);
+    console.log(
+        table([
+            [
+                '优先级',
+                '人力(规划内)',
+                '上线率(规划内)',
+                '研发完成率(规划内)',
+                '人力(规划外)',
+                '上线率(规划外)',
+                '研发完成率(规划外)'
+            ].map(item => chalk.bold(item)),
+            ...getPriorityDaysSummaryTableData(sheetNamePriorityProgressDaysMap[sheetName])
+        ])
+    );
+
     // 上线率: 已上线的需求（规划内 + 规划外） / 规划内人力
     let finishedOnlinePercent = calcProportion(finishedOnlineDays, daysInPlan);
     console.log(
-        `${chalk.bold('上线率:')} ${
+        `${chalk.bold('总体需求上线率:')} ${
             percentageToDecimal(finishedOnlinePercent) >= 0.8
                 ? chalk.green(finishedOnlinePercent)
                 : chalk.red(finishedOnlinePercent)
@@ -247,7 +362,7 @@ sheets.forEach(({name: sheetName, data: sheetData}) => {
     // 研发完成率： 已研发完成的需求（规划内 + 规划外）/ 规划内人力
     let finishedDevPercent = calcProportion(finishedDevDays, daysInPlan);
     console.log(
-        `${chalk.bold('研发完成率:')} ${
+        `${chalk.bold('总体需求研发完成率:')} ${
             percentageToDecimal(finishedDevPercent) >= 0.8
                 ? chalk.green(finishedDevPercent)
                 : chalk.red(finishedDevPercent)
